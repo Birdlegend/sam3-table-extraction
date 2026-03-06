@@ -111,14 +111,15 @@ def print_rank0(*args, **kwargs):
 class COCOSegmentDataset(Dataset):
     """Dataset class for COCO format segmentation data."""
 
-    def __init__(self, split_config: DatasetSplit):
+    def __init__(self, split_config: DatasetSplit, coco_dataset: COCODataset | None = None):
         self.image_dir = split_config.image_dir
-        ann_file = split_config.annotation_file
-
-        if not ann_file.exists():
-            raise FileNotFoundError(f"COCO annotation file not found: {ann_file}")
-
-        self.coco_data = COCODataset.from_json(ann_file)
+        if coco_dataset is not None:
+            self.coco_data = coco_dataset
+        else:
+            ann_file = split_config.annotation_file
+            if not ann_file.exists():
+                raise FileNotFoundError(f"COCO annotation file not found: {ann_file}")
+            self.coco_data = COCODataset.from_json(ann_file)
 
         # Build index: image_id -> image info
         self.images = {img.id: img for img in self.coco_data.images}
@@ -744,11 +745,13 @@ def create_coco_gt_from_dataset_original_res(dataset, image_ids=None, debug=Fals
 
 
 class SAM3TrainerNative:
-    def __init__(self, config: "SAM3LoRAConfig | str | Path", multi_gpu=False):
+    def __init__(self, config: "SAM3LoRAConfig | str | Path", coco_dataset: COCODataset | None = None, multi_gpu=False):
         if isinstance(config, (str, Path)):
             self.config = SAM3LoRAConfig.from_yaml(config)
         else:
             self.config = config
+
+        self.coco_dataset = coco_dataset
 
         # Multi-GPU setup
         self.multi_gpu = multi_gpu
@@ -875,7 +878,7 @@ class SAM3TrainerNative:
 
         # Load training dataset
         print_rank0(f"\nLoading training data from {data_cfg.train.image_dir}...")
-        train_ds = COCOSegmentDataset(data_cfg.train)
+        train_ds = COCOSegmentDataset(data_cfg.train, coco_dataset=self.coco_dataset)
 
         # Load validation dataset (if configured)
         has_validation = False

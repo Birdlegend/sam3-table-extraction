@@ -4,6 +4,7 @@ import os
 import modal
 
 from sam3_table.training_config import SAM3LoRAConfig
+from sam3_table.coco_schema import COCODataset
 
 image = (
     modal.Image.debian_slim()
@@ -18,6 +19,7 @@ app = modal.App(name="training-sam3", image = image)
 @app.function(gpu="A100", image=image, secrets=[modal.Secret.from_name("huggingface-secret")])
 def train_sam3(
     config: SAM3LoRAConfig,
+    coco_dataset: COCODataset | None = None,
     device: list[int] | None = None,
 ) -> None:
 
@@ -35,7 +37,7 @@ def train_sam3(
         os.environ["CUDA_VISIBLE_DEVICES"] = str(device[0])
         print(f"Using single GPU: {device[0]}")
 
-    trainer = SAM3TrainerNative(config, multi_gpu=multi_gpu)
+    trainer = SAM3TrainerNative(config, coco_dataset=coco_dataset, multi_gpu=multi_gpu)
     trainer.train()
 
     
