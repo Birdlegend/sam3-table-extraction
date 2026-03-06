@@ -15,7 +15,7 @@ image = (
 
 app = modal.App(name="training-sam3", image = image)
 
-@app.function(gpu="A100", image=image)
+@app.function(gpu="A100", image=image, secrets=[modal.Secret.from_name("huggingface-secret")])
 def train_sam3(
     config: SAM3LoRAConfig,
     device: list[int] | None = None,
