@@ -578,6 +578,8 @@ def run_tablebank_eval_on_current_leader(
     include_running_trials: bool = True,
     sqlite_lock_timeout_sec: int = 60,
     num_rung_stages: int = DEFAULT_NUM_RUNG_STAGES,
+    num_workers: int = 4,
+    prefetch_factor: int = 2,
 ) -> dict[str, Any]:
     leader = get_current_optuna_leader.local(
         study_name=study_name,
@@ -605,6 +607,8 @@ def run_tablebank_eval_on_current_leader(
         sample_seed=sample_seed,
         duplicate_iou_threshold=duplicate_iou_threshold,
         min_box_area=min_box_area,
+        num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
     )
     result["leader"] = leader
     result["benchmark_output_dir"] = leader_output_dir
@@ -662,6 +666,8 @@ def run_tablebank_eval(
     query_text: str = "table",
     batch_size: int = 8,
     visualize_max_images: int = 20,
+    num_workers: int = 4,
+    prefetch_factor: int = 2,
 ) -> dict[str, Any]:
     import numpy as np
     import pycocotools.mask as mask_utils
@@ -677,7 +683,7 @@ def run_tablebank_eval(
         Image,
         InferenceMetadata,
     )
-    from torch.utils.data import Dataset
+    from torch.utils.data import DataLoader, Dataset
     from torchvision.transforms import v2
 
     from sam3_table.model_builder import build_sam3_image_model
@@ -917,14 +923,30 @@ def run_tablebank_eval(
     log_every_batches = max(1, total_batches // 20)
     inference_start_time = time.monotonic()
 
-    for batch_idx, start in enumerate(range(0, len(dataset), batch_size)):
+    def _eval_collate(samples: list[Any]) -> dict[str, Any]:
+        return collate_fn_api(samples, dict_key="input", with_seg_masks=True)
+
+    effective_workers = max(0, int(num_workers))
+    dataloader_kwargs: dict[str, Any] = {
+        "batch_size": batch_size,
+        "shuffle": False,
+        "num_workers": effective_workers,
+        "collate_fn": _eval_collate,
+        "drop_last": False,
+    }
+    if effective_workers > 0:
+        dataloader_kwargs["persistent_workers"] = True
+        dataloader_kwargs["prefetch_factor"] = max(1, int(prefetch_factor))
+    data_loader = DataLoader(dataset, **dataloader_kwargs)
+    _log_step(
+        f"dataloader ready: batch_size={batch_size}, num_workers={effective_workers}, "
+        f"prefetch_factor={dataloader_kwargs.get('prefetch_factor', 'n/a')}"
+    )
+
+    for batch_idx, batch in enumerate(data_loader):
+        start = batch_idx * batch_size
         end = min(start + batch_size, len(dataset))
         batch_items = detection_images[start:end]
-        batch = collate_fn_api(
-            [dataset[idx] for idx in range(start, end)],
-            dict_key="input",
-            with_seg_masks=True,
-        )
         input_batch = _move_to_device(batch["input"], device_obj)
         with torch.inference_mode():
             outputs = model(input_batch)
